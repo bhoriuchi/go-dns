@@ -1,2 +1,2 @@
 # go-dns
-go package for working with dn
+go package for working with dns

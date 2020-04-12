@@ -51,6 +51,11 @@ type Client struct {
 	kdcs     []string
 }
 
+// Keyname returns the keyname
+func (c *Client) Keyname() *string {
+	return c.keyname
+}
+
 // NegotiateContext obtains a new tkey
 func (c *Client) NegotiateContext() (err error) {
 	var cfg *config.Config
@@ -100,8 +105,85 @@ func (c *Client) Cleanup() (err error) {
 	return
 }
 
+// Get performs an insert
+func (c *Client) Get(host, zone, req string) (r *dns.Msg, tt time.Duration, err error) {
+	return
+}
+
+// Insert performs an insert
+func (c *Client) Insert(host, zone string, reqs []string) (r *dns.Msg, tt time.Duration, err error) {
+	msg := new(dns.Msg)
+	updates := []dns.RR{}
+
+	for _, req := range reqs {
+		var rr dns.RR
+		if rr, err = dns.NewRR(req); err != nil {
+			return
+		}
+		updates = append(updates, rr)
+	}
+
+	msg.SetUpdate(dns.Fqdn(zone))
+	msg.Insert(updates)
+
+	r, tt, err = c.Exchange(host, zone, msg)
+	return
+}
+
+// Remove performs a remove
+func (c *Client) Remove(host, zone string, reqs []string) (r *dns.Msg, tt time.Duration, err error) {
+	msg := new(dns.Msg)
+	updates := []dns.RR{}
+
+	for _, req := range reqs {
+		var rr dns.RR
+		if rr, err = dns.NewRR(req); err != nil {
+			return
+		}
+		updates = append(updates, rr)
+	}
+
+	msg.SetUpdate(dns.Fqdn(zone))
+	msg.Remove(updates)
+
+	r, tt, err = c.Exchange(host, zone, msg)
+	return
+}
+
+// Update performs an update
+func (c *Client) Update(host, zone string, oReqs, nReqs []string) (r *dns.Msg, tt time.Duration, err error) {
+	msg := new(dns.Msg)
+	oUpdates := []dns.RR{}
+	nUpdates := []dns.RR{}
+
+	for _, req := range oReqs {
+		var rr dns.RR
+		if rr, err = dns.NewRR(req); err != nil {
+			return
+		}
+		oUpdates = append(oUpdates, rr)
+	}
+
+	for _, req := range nReqs {
+		var rr dns.RR
+		if rr, err = dns.NewRR(req); err != nil {
+			return
+		}
+		nUpdates = append(nUpdates, rr)
+	}
+
+	msg.SetUpdate(dns.Fqdn(zone))
+	msg.Remove(oUpdates)
+	msg.Insert(nUpdates)
+
+	r, tt, err = c.Exchange(host, zone, msg)
+	return
+}
+
 // Exchange performs an exchange
 func (c *Client) Exchange(host, zone string, msg *dns.Msg) (r *dns.Msg, tt time.Duration, err error) {
+	msg.SetTsig(*c.Keyname(), tsig.GSS, 300, time.Now().Unix())
+
 	r, tt, err = c.client.Exchange(msg, net.JoinHostPort(host, "53"))
 	if r.Rcode != dns.RcodeSuccess {
 		err = fmt.Errorf("DNS error: %s (%d)", dns.RcodeToString[r.Rcode], r.Rcode)
@@ -122,5 +204,15 @@ func NewWindDNSClientWithCredentials(krb5host, domain, username, password string
 	}
 
 	err = c.NegotiateContext()
+	return
+}
+
+// FQDNJoin joins the name and zone to create an fqdn
+func fqdnJoin(name, zone string) (fqdn string) {
+	fqdn = dns.Fqdn(fmt.Sprintf(
+		"%s.%s",
+		strings.Trim(name, "."),
+		strings.Trim(zone, "."),
+	))
 	return
 }

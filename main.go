@@ -20,11 +20,11 @@ func main() {
 
 	defer c.Cleanup()
 
-	r, _, err := c.RemoveA(
-		"test2",
+	r, _, err := c.InsertCNAME(
+		"test4",
 		xHost,
 		xZone,
-		"192.168.2.223",
+		"test3.example.com",
 		300,
 	)
 
