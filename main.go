@@ -7,7 +7,7 @@ import (
 )
 
 func main() {
-	c, err := windns.NewWindDNSClientWithCredentials(
+	c, err := windns.NewWinDNSClientWithCredentials(
 		xHost,
 		xDomain,
 		xUsername,

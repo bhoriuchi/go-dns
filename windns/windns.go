@@ -193,8 +193,8 @@ func (c *Client) Exchange(host, zone string, msg *dns.Msg) (r *dns.Msg, tt time.
 	return
 }
 
-// NewWindDNSClientWithCredentials creates a new client
-func NewWindDNSClientWithCredentials(krb5host, domain, username, password string, kdcs ...string) (c *Client, err error) {
+// NewWinDNSClientWithCredentials creates a new client
+func NewWinDNSClientWithCredentials(krb5host, domain, username, password string, kdcs ...string) (c *Client, err error) {
 	c = &Client{
 		krb5host: krb5host,
 		domain:   domain,
