@@ -7,12 +7,12 @@ import (
 )
 
 func main() {
-	c, err := windns.NewWinDNSClientWithCredentials(
-		xHost,
-		xDomain,
-		xUsername,
-		xPassword,
-	)
+	c, err := windns.NewClient(&windns.ClientConfig{
+		KRB5Host: xHost,
+		Domain:   xDomain,
+		Username: xUsername,
+		Password: xPassword,
+	})
 
 	if err != nil {
 		panic(err)
@@ -20,17 +20,23 @@ func main() {
 
 	defer c.Cleanup()
 
-	r, _, err := c.InsertCNAME(
-		"test4",
+	/*
+		r, _, err := c.InsertCNAME(
+			xHost,
+			"test4",
+			xZone,
+			"test3.example.com",
+			300,
+		)
+	*/
+	data, _, _, err := c.Lookup(
 		xHost,
-		xZone,
-		"test3.example.com",
-		300,
+		fmt.Sprintf("test4.%s", xZone),
 	)
 
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("MSG: %+v", r)
+	fmt.Printf("MSG: %s\n", data)
 }

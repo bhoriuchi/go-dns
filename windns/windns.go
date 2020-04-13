@@ -16,6 +16,10 @@ import (
 
 // NewKrb5Config creates a new krb5 config
 func NewKrb5Config(domain string, kdcs []string) (*config.Config, error) {
+	if len(kdcs) == 0 {
+		return nil, fmt.Errorf("no kdcs specified")
+	}
+
 	ld := strings.ToLower(domain)
 	ud := strings.ToUpper(domain)
 	kdcarr := []string{}
@@ -39,16 +43,84 @@ default_domain = %s
 	return config.NewFromString(krb5conf)
 }
 
+// ClientOption a client option
+type ClientOption func(cl *Client) (err error)
+
 // Client a dns client for windows dns
 type Client struct {
 	g        *gss.GSS
 	keyname  *string
 	client   *tsigclient.Client
+	krb5conf *config.Config
 	krb5host string
 	domain   string
 	username string
 	password string
-	kdcs     []string
+}
+
+// ClientConfig .
+type ClientConfig struct {
+	KRB5Host string
+	KRB5Conf *config.Config
+	Domain   string
+	Username string
+	Password string
+}
+
+// NewClient creates a new client
+func NewClient(conf *ClientConfig, opts ...ClientOption) (c *Client, err error) {
+	if len(conf.KRB5Host) == 0 {
+		err = fmt.Errorf("missing required configuration for krb5host")
+		return
+	} else if len(conf.Domain) == 0 {
+		err = fmt.Errorf("missing required configuration for domain")
+		return
+	} else if len(conf.Username) == 0 {
+		err = fmt.Errorf("missing required configuration for username")
+		return
+	} else if len(conf.Password) == 0 {
+		err = fmt.Errorf("missing required configuration for password")
+		return
+	}
+
+	c = &Client{
+		krb5host: conf.KRB5Host,
+		krb5conf: conf.KRB5Conf,
+		domain:   conf.Domain,
+		username: conf.Username,
+		password: conf.Password,
+	}
+
+	for _, opt := range opts {
+		if err = opt(c); err != nil {
+			return
+		}
+	}
+
+	if c.krb5conf == nil {
+		if c.krb5conf, err = NewKrb5Config(c.domain, []string{c.krb5host}); err != nil {
+			return
+		}
+	}
+
+	err = c.NegotiateContext()
+	return
+}
+
+// WithKRB5ConfigString sets the krb5 config
+func WithKRB5ConfigString(conf string) ClientOption {
+	return func(c *Client) (err error) {
+		c.krb5conf, err = config.NewFromString(conf)
+		return
+	}
+}
+
+// WithKRB5ConfigData generates the krb5 config
+func WithKRB5ConfigData(domain string, kdcs []string) ClientOption {
+	return func(c *Client) (err error) {
+		c.krb5conf, err = NewKrb5Config(domain, kdcs)
+		return
+	}
 }
 
 // Keyname returns the keyname
@@ -58,8 +130,6 @@ func (c *Client) Keyname() *string {
 
 // NegotiateContext obtains a new tkey
 func (c *Client) NegotiateContext() (err error) {
-	var cfg *config.Config
-
 	// clean up existing
 	if c.g != nil || c.keyname != nil {
 		c.Cleanup()
@@ -69,16 +139,7 @@ func (c *Client) NegotiateContext() (err error) {
 		return
 	}
 
-	// if no kdcs, use the host
-	if c.kdcs == nil || len(c.kdcs) == 0 {
-		c.kdcs = []string{c.krb5host}
-	}
-
-	if cfg, err = NewKrb5Config(c.domain, c.kdcs); err != nil {
-		return
-	}
-
-	cl := client.NewWithPassword(c.username, c.domain, c.password, cfg, client.DisablePAFXFAST(true))
+	cl := client.NewWithPassword(c.username, c.domain, c.password, c.krb5conf, client.DisablePAFXFAST(true))
 	if c.keyname, _, err = c.g.NegotiateContextWithClient(c.krb5host, cl); err != nil {
 		return
 	}
@@ -105,11 +166,6 @@ func (c *Client) Cleanup() (err error) {
 	return
 }
 
-// Get performs an insert
-func (c *Client) Get(host, zone, req string) (r *dns.Msg, tt time.Duration, err error) {
-	return
-}
-
 // Insert performs an insert
 func (c *Client) Insert(host, zone string, reqs []string) (r *dns.Msg, tt time.Duration, err error) {
 	msg := new(dns.Msg)
@@ -126,7 +182,7 @@ func (c *Client) Insert(host, zone string, reqs []string) (r *dns.Msg, tt time.D
 	msg.SetUpdate(dns.Fqdn(zone))
 	msg.Insert(updates)
 
-	r, tt, err = c.Exchange(host, zone, msg)
+	r, tt, err = c.Exchange(host, msg)
 	return
 }
 
@@ -146,7 +202,7 @@ func (c *Client) Remove(host, zone string, reqs []string) (r *dns.Msg, tt time.D
 	msg.SetUpdate(dns.Fqdn(zone))
 	msg.Remove(updates)
 
-	r, tt, err = c.Exchange(host, zone, msg)
+	r, tt, err = c.Exchange(host, msg)
 	return
 }
 
@@ -176,12 +232,26 @@ func (c *Client) Update(host, zone string, oReqs, nReqs []string) (r *dns.Msg, t
 	msg.Remove(oUpdates)
 	msg.Insert(nUpdates)
 
-	r, tt, err = c.Exchange(host, zone, msg)
+	r, tt, err = c.Exchange(host, msg)
+	return
+}
+
+// Lookup looks up a value
+func (c *Client) Lookup(host, value string) (data string, r *dns.Msg, tt time.Duration, err error) {
+	msg := new(dns.Msg)
+	msg.SetQuestion(dns.Fqdn(value), dns.TypeANY)
+	r, tt, err = c.Exchange(host, msg)
+
+	if len(r.Answer) == 0 {
+		return
+	}
+
+	data = strings.Trim(dns.Field(r.Answer[0], 1), ".")
 	return
 }
 
 // Exchange performs an exchange
-func (c *Client) Exchange(host, zone string, msg *dns.Msg) (r *dns.Msg, tt time.Duration, err error) {
+func (c *Client) Exchange(host string, msg *dns.Msg) (r *dns.Msg, tt time.Duration, err error) {
 	msg.SetTsig(*c.Keyname(), tsig.GSS, 300, time.Now().Unix())
 
 	r, tt, err = c.client.Exchange(msg, net.JoinHostPort(host, "53"))
@@ -190,20 +260,6 @@ func (c *Client) Exchange(host, zone string, msg *dns.Msg) (r *dns.Msg, tt time.
 		return
 	}
 
-	return
-}
-
-// NewWinDNSClientWithCredentials creates a new client
-func NewWinDNSClientWithCredentials(krb5host, domain, username, password string, kdcs ...string) (c *Client, err error) {
-	c = &Client{
-		krb5host: krb5host,
-		domain:   domain,
-		username: username,
-		password: password,
-		kdcs:     kdcs,
-	}
-
-	err = c.NegotiateContext()
 	return
 }
 
